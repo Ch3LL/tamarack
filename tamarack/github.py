@@ -3,7 +3,7 @@
 Contains functions required for interacting with GitHub. The main function
 used is the ``api_request`` function. This function handles the GET/POST
 interactions to GitHub APIv3. Other functions in the file were written to
-handle all kinds of GitHub API use cases.
+handle other types of GitHub API use cases.
 '''
 
 # Import Python libs
@@ -73,39 +73,32 @@ def api_request(url, token, method='GET', headers=None, post_data=None):
 
 
 @gen.coroutine
-def assign_reviewers(event_data, token, reviewers):
+def assign_reviewers(event_data, token):
     '''
-    Assign a reviewer (or list of reviewers) to a pull request.
+    Assign a reviewer (or list of reviewers) to a pull request based on the
+    reviewers given in the event_data payload from GitHub.
 
-    Note: Due to restrictions with the GitHub API, requesting a review from
-    an organizational team is not permitted. This functionality should be
-    exposed soon from GitHub, but for now it is limited to individual members
-    of the organization.
+    These reviewers will be listed in either the "requested_reviewers" key
+    for individual reviewers or the "requested_teams" key for team reviewers.
 
     event_data
         Payload sent from GitHub.
 
     token
         GitHub user token.
-
-    reviewers
-        The single reviewer, or list of reviewers, to request a review from
-        on the pull request.
     '''
     url = _get_pr_url(event_data)
     url += '/requested_reviewers'
 
-    if not isinstance(reviewers, list):
-        reviewers = [reviewers]
+    pr_data = event_data.get('pull_request')
+    pr_num = event_data.get('number', 'unknown')
 
     teams = []
     individuals = []
-    for reviewer in reviewers:
-        if '/' in reviewer:
-            org, team = reviewer.split('/')
-            teams.append(team)
-        else:
-            individuals.append(reviewer)
+    for individual in pr_data.get('requested_reviewers', []):
+        individuals.append(individual['login'])
+    for team in pr_data.get('requested_teams', []):
+        teams.append(team['slug'])
 
     post_data = {}
     if individuals:
@@ -113,11 +106,14 @@ def assign_reviewers(event_data, token, reviewers):
     if teams:
         post_data['team_reviewers'] = teams
 
-    print(
-        'Requesting reviewers {0} on pull request #{1}.'.format(
-            reviewers,
-            event_data.get('number', 'unknown')
-        )
+    reviewer_list = individuals + teams
+    if not reviewer_list:
+        print('PR #{0}: No reviewers found.'.format(pr_num))
+        return
+
+    print('PR #{0}: Requesting reviewers {1}.'.format(
+        pr_num,
+        reviewer_list)
     )
 
     yield api_request(url, token, method='POST', post_data=post_data)
